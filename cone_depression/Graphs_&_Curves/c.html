@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>CNN Cone Detection — Model Comparison Report</title>
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0
+        }
+
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #f4f6fb;
+            color: #222;
+            font-size: 15px;
+            line-height: 1.7
+        }
+
+        .page {
+            max-width: 1060px;
+            margin: 0 auto;
+            padding: 40px 32px 60px;
+            background: #fff;
+            box-shadow: 0 4px 32px rgba(0, 0, 0, .10)
+        }
+
+        .title-block {
+            background: linear-gradient(135deg, #1a3a5c 0%, #2d6aad 100%);
+            color: #fff;
+            border-radius: 10px;
+            padding: 36px 40px 28px;
+            margin-bottom: 36px
+        }
+
+        .title-block h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 6px
+        }
+
+        .title-block .sub {
+            font-size: 1.05rem;
+            opacity: .85;
+            font-style: italic
+        }
+
+        .title-block .intro {
+            margin-top: 16px;
+            font-size: .95rem;
+            opacity: .9;
+            line-height: 1.6
+        }
+
+        h2 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #1a3a5c;
+            border-left: 5px solid #2d6aad;
+            padding-left: 12px;
+            margin: 36px 0 10px
+        }
+
+        h3 {
+            font-size: 1rem;
+            font-weight: 700;
+            color: #2d6aad;
+            margin: 18px 0 6px
+        }
+
+        p {
+            margin-bottom: 10px
+        }
+
+        .explainer {
+            background: #eef4fc;
+            border-left: 4px solid #2d6aad;
+            border-radius: 6px;
+            padding: 14px 18px;
+            margin: 14px 0 18px;
+            font-size: .95rem
+        }
+
+        .explainer strong {
+            color: #1a3a5c
+        }
+
+        .compare-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin: 20px 0 8px
+        }
+
+        .model-card {
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, .10)
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            font-weight: 700;
+            font-size: .95rem
+        }
+
+        .card-header.new {
+            background: #1a3a5c;
+            color: #fff
+        }
+
+        .card-header.old {
+            background: #8b1a1a;
+            color: #fff
+        }
+
+        .model-card img {
+            width: 100%;
+            display: block;
+            background: #f8f9fb
+        }
+
+        .fig-caption {
+            text-align: center;
+            font-size: .82rem;
+            color: #666;
+            font-style: italic;
+            margin-bottom: 20px
+        }
+
+        .interp-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin: 14px 0 18px
+        }
+
+        .interp-card {
+            border-radius: 8px;
+            padding: 14px 16px;
+            font-size: .93rem
+        }
+
+        .interp-card.new {
+            background: #e8f4e8;
+            border: 1px solid #5a9e5a
+        }
+
+        .interp-card.old {
+            background: #fdecea;
+            border: 1px solid #c0392b
+        }
+
+        .interp-card .label {
+            font-weight: 700;
+            margin-bottom: 6px;
+            font-size: .95rem
+        }
+
+        .interp-card.new .label {
+            color: #2d6a2d
+        }
+
+        .interp-card.old .label {
+            color: #922b21
+        }
+
+        .verdict {
+            background: linear-gradient(90deg, #e8f4e8 0%, #d5edda 100%);
+            border: 1.5px solid #5a9e5a;
+            border-radius: 8px;
+            padding: 14px 20px;
+            margin: 4px 0 28px;
+            font-size: .97rem;
+            font-weight: 600;
+            color: #1e4d1e
+        }
+
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 18px 0 28px;
+            font-size: .92rem
+        }
+
+        .summary-table th {
+            background: #1a3a5c;
+            color: #fff;
+            padding: 10px 14px;
+            text-align: left
+        }
+
+        .summary-table th:not(:first-child) {
+            text-align: center
+        }
+
+        .summary-table td {
+            padding: 9px 14px;
+            border-bottom: 1px solid #e0e6ef;
+            vertical-align: middle
+        }
+
+        .summary-table td:not(:first-child) {
+            text-align: center
+        }
+
+        .summary-table tr:nth-child(even) td {
+            background: #f2f6fb
+        }
+
+        .winner {
+            color: #1e7c1e;
+            font-weight: 700
+        }
+
+        .old-val {
+            color: #922b21
+        }
+
+        .new-val {
+            color: #1e7c1e;
+            font-weight: 600
+        }
+
+        .conclusion {
+            background: #f0f4ff;
+            border-radius: 10px;
+            padding: 22px 26px;
+            margin-top: 10px;
+            border: 1px solid #c5d3ef
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 36px;
+            font-size: .8rem;
+            color: #aaa
+        }
+
+        hr {
+            border: none;
+            border-top: 1.5px solid #dde4ef;
+            margin: 30px 0
+        }
+    </style>
+</head>
+
+<body>
+    <div class="page">
+
+        <div class="title-block">
+            <div class="sub">Technical Evaluation Report</div>
+            <h1>CNN Cone Detection — Model Comparison</h1>
+            <div class="intro">
+                This report provides a direct, side-by-side evaluation of two CNN models trained to classify
+                traffic cones by colour (Blue, Green, Orange). Four standard performance diagnostics are examined:
+                Training Loss & Accuracy curves, Confusion Matrix, Classification Report, and ROC/AUC curves.
+                For each metric the chart is explained in plain language, followed by an interpretation of what
+                the results reveal about each model's behaviour and reliability.
+            </div>
+        </div>
+
+        <h2>1 · Training Loss &amp; Accuracy Curves</h2>
+        <div class="explainer">
+            <strong>What does this chart show?</strong><br>
+            The <em>loss curve</em> measures how wrong the model's predictions are on average after each epoch — lower
+            is better. The <em>accuracy curve</em> shows the proportion of samples classified correctly. When both
+            converge smoothly and the training/validation/test lines stay close together, the model is learning genuine
+            features rather than memorising training data (overfitting).
+        </div>
+
+        <div class="compare-grid">
+            <div class="model-card">
+                <div class="card-header new">✅ New Model — Loss &amp; Accuracy</div>
+                <img src="Loss_and_Accuracy_new.png" alt="New Model Loss and Accuracy">
+            </div>
+            <div class="model-card">
+                <div class="card-header old">⚠️ Old Model — Loss &amp; Accuracy</div>
+                <img src="Loss_and_Accuracy_old.png" alt="Old Model Loss and Accuracy">
+            </div>
+        </div>
+        <p class="fig-caption">Figure 1 — New model (left) converges cleanly to near-zero loss and 100 % accuracy within
+            ~10 epochs. Old model (right) shows noisy, slow convergence peaking around 60 % accuracy after 25 epochs.
+        </p>
+
+        <h3>Interpretation</h3>
+        <div class="interp-grid">
+            <div class="interp-card new">
+                <div class="label">✅ New Model</div>
+                Loss collapses from ~1.15 to near 0 within the first 10 epochs. All three accuracy lines — Train,
+                Validation, and Test — rise together and plateau at 100 % by epoch 10–20. The tight alignment between
+                train and test accuracy confirms the model has generalised well, not just memorised training examples.
+            </div>
+            <div class="interp-card old">
+                <div class="label">⚠️ Old Model</div>
+                Loss decreases slowly from ~1.10 and is still above 0.80 at epoch 25. Accuracy oscillates between 30 %
+                and 62 % without ever stabilising. The jagged, noisy curves suggest an inappropriate learning rate,
+                insufficient data, or an ill-suited architecture that cannot settle on reliable decision boundaries.
+            </div>
+        </div>
+        <div class="verdict">✅ Verdict — The new model converges ~2.5× faster and reaches 100 % accuracy with no
+            overfitting. The old model stagnates around 60 % and never stabilises, making it unreliable for deployment.
+        </div>
+
+        <hr>
+
+        <h2>2 · Confusion Matrix</h2>
+        <div class="explainer">
+            <strong>What does this chart show?</strong><br>
+            Each row represents a <em>true</em> class; each column represents a <em>predicted</em> class. The diagonal
+            cells count correct predictions. Every off-diagonal cell is an error — the number tells you how many samples
+            of one class were wrongly assigned to another. A perfect model shows large numbers only on the diagonal and
+            zeros everywhere else.
+        </div>
+
+        <div class="compare-grid">
+            <div class="model-card">
+                <div class="card-header new">✅ New Model — Confusion Matrix</div>
+                <img src="Confusion_matrix_new.png" alt="New Model Confusion Matrix">
+            </div>
+            <div class="model-card">
+                <div class="card-header old">⚠️ Old Model — Confusion Matrix</div>
+                <img src="Confusion_matrix_old.png" alt="Old Model Confusion Matrix">
+            </div>
+        </div>
+        <p class="fig-caption">Figure 2 — New model (left): perfect diagonal — 7 Blue, 7 Green, 1 Orange, zero errors.
+            Old model (right): all 8 Green cones misclassified as Blue; 2 Blue cones misclassified as Orange.</p>
+
+        <h3>Interpretation</h3>
+        <div class="interp-grid">
+            <div class="interp-card new">
+                <div class="label">✅ New Model</div>
+                All 15 test samples sit on the diagonal: 7 Blue correctly identified as Blue, 7 Green correctly
+                identified as Green, and 1 Orange correctly identified as Orange. There are <strong>zero
+                    misclassifications</strong> — a flawless result on this test set.
+            </div>
+            <div class="interp-card old">
+                <div class="label">⚠️ Old Model</div>
+                Out of 31 test samples, every single Green cone (8 samples) is predicted as Blue — the model has learned
+                nothing distinctive about the Green class. Additionally 2 of 11 Blue cones are misidentified as Orange.
+                Only Orange partially works (6 correct out of 12). 15 samples in total are wrong.
+            </div>
+        </div>
+        <div class="verdict">✅ Verdict — New model: 15/15 correct (0 errors). Old model: 16/31 correct (15 errors, 48 %
+            accuracy). The old model is completely blind to Green cones — a critical failure for a cone-detection
+            system.</div>
+
+        <hr>
+
+        <h2>3 · Classification Report</h2>
+        <div class="explainer">
+            <strong>What does this chart show?</strong><br>
+            Four per-class statistics are reported:<br>
+            • <strong>Precision</strong> — of all predictions made for class X, what fraction were actually X? A low
+            value means too many false alarms.<br>
+            • <strong>Recall</strong> — of all true class-X instances, what fraction did the model detect? A low value
+            means too many missed detections.<br>
+            • <strong>F1-score</strong> — harmonic mean of precision and recall; a balanced single-number summary (0–1,
+            higher = better).<br>
+            • <strong>Support</strong> — how many test samples of that class exist.<br>
+            For safety-critical cone detection, low recall is especially dangerous because real cones go undetected.
+        </div>
+
+        <div class="compare-grid">
+            <div class="model-card">
+                <div class="card-header new">✅ New Model — Classification Report</div>
+                <img src="Classification_report_new.png" alt="New Model Classification Report"
+                    style="padding:14px;background:#1a1a2e;">
+            </div>
+            <div class="model-card">
+                <div class="card-header old">⚠️ Old Model — Classification Report</div>
+                <img src="Classification_report_old.png" alt="Old Model Classification Report"
+                    style="padding:14px;background:#1a1a2e;">
+            </div>
+        </div>
+        <p class="fig-caption">Figure 3 — New model (left): every metric = 1.00. Old model (right): Green F1 = 0.00,
+            weighted F1 = 0.42.</p>
+
+        <h3>Interpretation</h3>
+        <div class="interp-grid">
+            <div class="interp-card new">
+                <div class="label">✅ New Model</div>
+                All three cone classes achieve precision = recall = F1 = <strong>1.00</strong>. Macro and weighted
+                averages are also 1.00. This means the model never produces a false alarm and never misses a cone of any
+                colour.
+            </div>
+            <div class="interp-card old">
+                <div class="label">⚠️ Old Model</div>
+                Green class: precision = recall = F1 = <strong>0.00</strong> — not a single Green cone is correctly
+                identified. Blue has F1 = 0.53 (precision only 0.39), bloated by absorbing all Green samples. Orange
+                reaches F1 = 0.60. The overall weighted F1 of <strong>0.42</strong> confirms this model is barely above
+                random chance.
+            </div>
+        </div>
+        <div class="verdict">✅ Verdict — New model weighted F1 = 1.00. Old model weighted F1 = 0.42, with F1 = 0.00 for
+            an entire class. The old model is operationally unreliable and unsafe for deployment.</div>
+
+        <hr>
+
+        <h2>4 · ROC Curve &amp; AUC Score</h2>
+        <div class="explainer">
+            <strong>What does this chart show?</strong><br>
+            The <em>ROC curve</em> plots the True Positive Rate (recall) on the Y-axis against the False Positive Rate
+            on the X-axis as the decision threshold is swept from 0 to 1. A curve that hugs the <strong>top-left
+                corner</strong> is ideal — it finds every true positive while generating no false alarms. The dashed
+            diagonal represents random chance. The <em>Area Under the Curve (AUC)</em> summarises performance in one
+            number: <strong>1.0 = perfect classifier, 0.5 = coin flip</strong>. AUC above 0.8 is generally good; above
+            0.9 is excellent.
+        </div>
+
+        <div class="compare-grid">
+            <div class="model-card">
+                <div class="card-header new">✅ New Model — ROC / AUC</div>
+                <img src="AUC_ROC_new.png" alt="New Model ROC AUC">
+            </div>
+            <div class="model-card">
+                <div class="card-header old">⚠️ Old Model — ROC / AUC</div>
+                <img src="AUC_ROC_old.png" alt="Old Model ROC AUC">
+            </div>
+        </div>
+        <p class="fig-caption">Figure 4 — New model (left): all three class curves reach the top-left corner, AUC =
+            1.00. Old model (right): stepped curves with AUC ranging from 0.67 (Blue) to 0.86 (Orange).</p>
+
+        <h3>Interpretation</h3>
+        <div class="interp-grid">
+            <div class="interp-card new">
+                <div class="label">✅ New Model</div>
+                All three class curves (Blue, Green, Orange) collapse into the top-left corner, each achieving AUC =
+                <strong>1.00</strong>. The model's output probabilities are so perfectly separated by class that
+                <em>any</em> threshold choice gives zero false positives — the best possible score.
+            </div>
+            <div class="interp-card old">
+                <div class="label">⚠️ Old Model</div>
+                Blue AUC = <strong>0.67</strong> — barely above chance, indicating the model is nearly unable to
+                distinguish Blue cones from the rest. Green AUC = <strong>0.73</strong> and Orange AUC =
+                <strong>0.86</strong> are moderate but still show uncertain class boundaries. The step-like curves
+                reflect few well-calibrated probability thresholds.
+            </div>
+        </div>
+        <div class="verdict">✅ Verdict — New model AUC = 1.00 for all classes. Old model AUC ranges from 0.67 to 0.86,
+            reflecting poor probability calibration and unreliable confidence scores across the board.</div>
+
+        <hr>
+
+        <h2>5 · At-a-Glance Summary</h2>
+        <table class="summary-table">
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th>New Model</th>
+                    <th>Old Model</th>
+                    <th>Winner</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Overall Accuracy</td>
+                    <td class="new-val">100 % (15/15)</td>
+                    <td class="old-val">48 % (16/31)</td>
+                    <td class="winner">New ✅</td>
+                </tr>
+                <tr>
+                    <td>Macro F1-Score</td>
+                    <td class="new-val">1.00</td>
+                    <td class="old-val">0.38</td>
+                    <td class="winner">New ✅</td>
+                </tr>
+                <tr>
+                    <td>Weighted F1-Score</td>
+                    <td class="new-val">1.00</td>
+                    <td class="old-val">0.42</td>
+                    <td class="winner">New ✅</td>
+                </tr>
+                <tr>
+                    <td>Blue Class F1</td>
+                    <td class="new-val">1.00</td>
+                    <td class="old-val">0.53</td>
+                    <td class="winner">New ✅</td>
+                </tr>
+                <tr>
+                    <td>Green Class F1</td>
+                    <td class="new-val">1.00</td>
+                    <td class="old-val">0.00 ⛔</td>
+                    <td class="winner">New ✅</td>
+                </tr>
+                <tr>
+                    <td>Orange Class F1</td>
+                    <td class="new-val">1.00</td>
+                    <td class="old-val">0.60</td>
+                    <td class="winner">New ✅</td>
+                </tr>
+                <tr>
+                    <td>Blue AUC</td>
+                    <td class="new-val">1.00</td>
+                    <td class="old-val">0.67</td>
+                    <td class="winner">New ✅</td>
+                </tr>
+                <tr>
+                    <td>Green AUC</td>
+                    <td class="new-val">1.00</td>
+                    <td class="old-val">0.73</td>
+                    <td class="winner">New ✅</td>
+                </tr>
+                <tr>
+                    <td>Orange AUC</td>
+                    <td class="new-val">1.00</td>
+                    <td class="old-val">0.86</td>
+                    <td class="winner">New ✅</td>
+                </tr>
+                <tr>
+                    <td>Training Convergence</td>
+                    <td class="new-val">~10 epochs, stable</td>
+                    <td class="old-val">&gt;25 epochs, noisy</td>
+                    <td class="winner">New ✅</td>
+                </tr>
+                <tr>
+                    <td>Total Misclassifications</td>
+                    <td class="new-val">0 / 15</td>
+                    <td class="old-val">15 / 31</td>
+                    <td class="winner">New ✅</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="conclusion">
+            <h2 style="margin-top:0;border-left:5px solid #2d6aad;padding-left:12px;">Conclusion</h2>
+            <p>Across every diagnostic dimension — training stability, classification accuracy, per-class F1 scores,
+                confusion matrix, and ROC/AUC — the <strong>new CNN model decisively outperforms the old model</strong>
+                on all counts.</p>
+            <p>The old model's complete failure to learn the Green class (F1 = 0.00, all 8 Green cones misclassified as
+                Blue) makes it unsuitable for any safety-relevant cone detection pipeline. With an overall accuracy of
+                just 48 % and a weighted F1 of 0.42, it is effectively no better than a simple majority-class baseline.
+            </p>
+            <p>The new model achieves perfect scores across all metrics on the test set, converges quickly, and shows no
+                signs of overfitting, strongly suggesting that architectural improvements, training strategy, or data
+                pipeline changes have been highly effective.</p>
+            <p style="margin-bottom:0;"><em>Note on scope:</em> The new model was evaluated on a smaller test set (15 vs
+                31 samples) with a heavily imbalanced Orange class (only 1 sample). Evaluating on a larger, balanced
+                held-out set is recommended before final deployment.</p>
+        </div>
+
+        <div class="footer">CNN Cone Detection · Model Evaluation Report</div>
+    </div>
+</body>
+
+</html>

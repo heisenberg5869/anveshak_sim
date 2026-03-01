@@ -1,37 +1,7 @@
-"""
-CAN Frame Validator
-====================
-Validates 11-bit (base frame) CAN frames from a CSV file.
-
-Checks performed:
-  1. ID validity                  - 11-bit IDs must be in range 0x000-0x7FF
-  2. DLC validity                 - DLC must be 0-8
-  3. DLC / data length mismatch   - actual number of data bytes must equal DLC
-  4. CRC-15 correctness           - computed over the CAN base-frame bit stream
-                                    using polynomial 0x4599
-
-CAN base-frame bit stream used for CRC-15:
-  SOF (1 bit, 0) | ID (11 bits) | RTR (1 bit) | IDE (1 bit) | r0 (1 bit) | DLC (4 bits) | DATA (DLC x 8 bits)
-
-CRC-15 algorithm:
-  - Processes bits MSB-first
-  - Feedback based on the MSB of the *current* register XOR the incoming bit
-    (standard LFSR: if top-bit XOR in-bit == 1, shift and XOR poly; else just shift)
-  - Initial value: 0x0000
-  - No final XOR or reflection
-
-Usage:
-  python can_validator.py <csv_file>
-  python can_validator.py          <- uses can_frames.csv in same directory
-"""
-
 import csv
 import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# CRC-15 / CAN   (polynomial 0x4599)
-# ---------------------------------------------------------------------------
 CRC_POLY = 0x4599   # x^15 + x^14 + x^10 + x^8 + x^7 + x^4 + x^3 + 1
 CRC_BITS = 15
 CRC_MASK = (1 << CRC_BITS) - 1   # 0x7FFF
@@ -56,10 +26,6 @@ def int_to_bits(value: int, width: int) -> list:
     return [(value >> (width - 1 - i)) & 1 for i in range(width)]
 
 
-# ---------------------------------------------------------------------------
-# Build CAN base-frame bit stream for CRC computation
-# Bit order: SOF | ID[10:0] | RTR | IDE | r0 | DLC[3:0] | DATA bytes
-# ---------------------------------------------------------------------------
 def build_frame_bits(can_id: int, ide: int, rtr: int,
                      dlc: int, data_bytes: list) -> list:
     bits  = [0]                          # SOF (dominant)
@@ -73,7 +39,7 @@ def build_frame_bits(can_id: int, ide: int, rtr: int,
     return bits
 
 
-# ---------------------------------------------------------------------------
+
 # Validation
 # ---------------------------------------------------------------------------
 MAX_ID  = 0x7FF   # 11-bit limit
@@ -145,9 +111,7 @@ def validate_frame(row: dict) -> dict:
 
     status = "PASS" if not detected else "FAIL"
 
-    return {
-        "timestamp":           ts,
-        "id":                  id_str,
+    return {"timestamp":ts, "id":id_str,
         "ide":                 ide,
         "rtr":                 rtr,
         "dlc":                 dlc,
@@ -159,32 +123,21 @@ def validate_frame(row: dict) -> dict:
         "status":              status,
     }
 
-
-# ---------------------------------------------------------------------------
-# Report printer
-# ---------------------------------------------------------------------------
-SEP = "=" * 80
-
-
 def print_report(results: list):
     total  = len(results)
     passes = sum(1 for r in results if r["status"] == "PASS")
     fails  = total - passes
 
-    agreement = sum(
-        1 for r in results
-        if ",".join(sorted(r["detected_errors"])) ==
-           ",".join(sorted(r["csv_reported_errors"].split(",")))
-    )
+    agreement = sum(1 for r in results if ",".join(sorted(r["detected_errors"])) == ",".join(sorted(r["csv_reported_errors"].split(","))))
 
-    print(SEP)
-    print("  CAN FRAME VALIDATION REPORT")
-    print(SEP)
-    print(f"  Total frames                   : {total}")
-    print(f"  PASS (no errors detected)      : {passes}")
-    print(f"  FAIL (one or more errors)      : {fails}")
-    print(f"  Agreement with CSV error labels: {agreement}/{total}")
-    print(SEP)
+    print("  Notes:")
+    print("   - CRC is computed over: SOF + ID(11b) + RTR + IDE + r0 + DLC(4b) + DATA")
+    print("   - Polynomial 0x4599, init=0, MSB-first, no final XOR")
+    print("   - 'bad_id'  : ID > 0x7FF (exceeds 11-bit range)")
+    print("   - 'bad_dlc' : DLC > 8 or < 0")
+    print("   - 'mismatch_of_dlc_and_data_frame' : len(data) != DLC")
+    print("   - 'bad_crc' : computed CRC != CRC in file")
+
 
     for i, r in enumerate(results, 1):
         det_str = ", ".join(r["detected_errors"])
@@ -204,20 +157,7 @@ def print_report(results: list):
         print(f"  Detected      : {det_str}")
         print(f"  CSV errors    : {rep_str}  [{agree}]")
 
-    print(f"\n{SEP}")
-    print("  Notes:")
-    print("   - CRC is computed over: SOF + ID(11b) + RTR + IDE + r0 + DLC(4b) + DATA")
-    print("   - Polynomial 0x4599, init=0, MSB-first, no final XOR")
-    print("   - 'bad_id'  : ID > 0x7FF (exceeds 11-bit range)")
-    print("   - 'bad_dlc' : DLC > 8 or < 0")
-    print("   - 'mismatch_of_dlc_and_data_frame' : len(data) != DLC")
-    print("   - 'bad_crc' : computed CRC != CRC in file")
-    print(SEP)
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 def main(csv_path: str):
     path = Path(csv_path)
     if not path.exists():

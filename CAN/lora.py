@@ -1,231 +1,169 @@
-"""
-LoRa Backup Communication Simulation
-Uses com0com virtual null-modem pair: COM10 (sender) <-> COM11 (receiver)
-EmuNoise=0.01 is already active on the port — used for Bonus corruption simulation.
-
-Install dependency:  pip install pyserial
-"""
-
 import serial
+import numpy as np
 import threading
 import time
-import json
-import zlib
-import struct
-import random
 
-# ─────────────────────────────────────────────
-# CONFIGURATION
-# ─────────────────────────────────────────────
-SENDER_PORT   = 'COM10'
-RECEIVER_PORT = 'COM11'
-BAUD_RATE     = 9600          # realistic LoRa UART baud rate
+# Simulation of virtual serial ports
 
-LORA_MAX_PAYLOAD   = 255      # max bytes per LoRa packet payload
-LORA_BANDWIDTH_BPS = 100_000  # 100 kB/s
+# Mac: First install socat using, brew install socat
+# Run the following command in the terminal and keep it running on the execution of code
+# socat -d -d pty,raw,echo=0 pty,raw,echo=0
+# You can find the port names in the terminal where you ran the socat command. 
 
-# ── Bonus: Software corruption (on top of com0com EmuNoise) ──────────────────
-CORRUPTION_ENABLED = True   # Set True to enable extra software corruption
-CORRUPTION_RATE    = 0.3     # 30% of packets get an extra bit-flip
+# Windows: In this application, we are going to use com0com
+# There will a zip file attched to the resouces of the application. Run setup.exe
+# Open your installed folder, run setupc.exe
+# Type: install PortName=COM30 PortName=COM31 to create your virtual ports
 
-# ─────────────────────────────────────────────
-# PACKET HELPERS
-# ─────────────────────────────────────────────
-MAGIC = b'\xAB\xCD'
+# Replace "your_port" with the port name of the sender and receiver
 
-def build_packet(seq: int, payload: bytes) -> bytes:
-    """
-    Frame format:
-      2 B  magic
-      2 B  sequence number
-      2 B  payload length
-      N B  payload
-      4 B  CRC32
-    """
-    header = MAGIC + struct.pack('>HH', seq, len(payload))
-    crc    = struct.pack('>I', zlib.crc32(header + payload) & 0xFFFFFFFF)
-    return header + payload + crc
+# To install dependencies, 
+# pip install pyserial
+# pip install numpy
 
-def parse_packet(raw: bytes):
-    """Returns (seq, payload) or raises ValueError on bad magic / CRC."""
-    if len(raw) < 10:
-        raise ValueError("Packet too short")
-    if raw[:2] != MAGIC:
-        raise ValueError("Bad magic bytes")
-    seq, length = struct.unpack('>HH', raw[2:6])
-    payload = raw[6:6 + length]
-    received_crc = raw[6 + length: 10 + length]
-    expected_crc = struct.pack('>I', zlib.crc32(raw[:6 + length]) & 0xFFFFFFFF)
-    if received_crc != expected_crc:
-        raise ValueError("CRC mismatch — data corrupted!")
-    return seq, payload
+# Now to run your code, 
+# python3 application.py
 
-def compress_data(data: dict) -> bytes:
-    return zlib.compress(json.dumps(data).encode())
+port_sender = "COM10"  
+port_receiver = "COM11" 
 
-def decompress_data(raw: bytes) -> dict:
-    return json.loads(zlib.decompress(raw).decode())
+BYTE_RESET_PROBABLITY = 0.005
 
-# ─────────────────────────────────────────────
-# BONUS – Extra Software Corruption
-# ─────────────────────────────────────────────
+# ── Protocol constants ────────────────────────────────────────────────────────
+START_BYTE = 0xAA
+END_BYTE   = 0xFF
 
-def maybe_corrupt(packet: bytes, seq: int) -> bytes:
-    if CORRUPTION_ENABLED and random.random() < CORRUPTION_RATE:
-        ba  = bytearray(packet)
-        idx = random.randint(6, max(6, len(ba) - 5))
-        ba[idx] ^= 0xFF
-        return bytes(ba)
-    return packet
+def send_data(ser: serial.Serial, data: np.ndarray) -> None:
 
-# ─────────────────────────────────────────────
-# SENDER  (writes to COM10)
-# ─────────────────────────────────────────────
-def sender(messages: list):
-    print(f"\n[SENDER] Opening {SENDER_PORT} ...")
-    with serial.Serial(SENDER_PORT, BAUD_RATE, timeout=2) as port:
-        print(f"[SENDER] Connected on {port.name}")
-        for seq, msg in enumerate(messages):
-            compressed = compress_data(msg)
+    data_to_send = []
 
-            # Fragment into LoRa-sized chunks
-            chunks = [compressed[i:i + LORA_MAX_PAYLOAD]
-                      for i in range(0, len(compressed), LORA_MAX_PAYLOAD)]
+    # Frame format: [START, len_high, len_low, d0, d1, ..., dn, checksum, END]
+    length   = len(data)
+    checksum = int(np.sum(data) % 256)
 
-            for chunk in chunks:
-                pkt = build_packet(seq, chunk)
-                pkt = maybe_corrupt(pkt, seq)         # Bonus software corruption
-                port.write(pkt)
+    data_to_send.append(START_BYTE)
+    data_to_send.append((length >> 8) & 0xFF)   # length high byte
+    data_to_send.append(length & 0xFF)           # length low byte
+    for val in data:
+        data_to_send.append(int(val))
+    data_to_send.append(checksum)
+    data_to_send.append(END_BYTE)
 
-                # Throttle to LoRa bandwidth
-                time.sleep(len(pkt) / LORA_BANDWIDTH_BPS)
+    # For challenge question, uncomment this
+    # This should be done, JUST before sending the data
+    # No other code should be there after this, other than sending the data itself
 
-                print(f"[SENDER] Packet {seq + 1}/{len(messages)} sent")
+    for i in range(len(data_to_send)):
+        if np.random.random() < BYTE_RESET_PROBABLITY:
+            data_to_send[i] = 0x00
 
-        # END sentinel
-        port.write(build_packet(0xFFFF, b'END'))
-        print("[SENDER] All messages sent.")
+    for byte in data_to_send:
+        ser.write(bytes([byte]))
 
-# ─────────────────────────────────────────────
-# RECEIVER  (reads from COM11)
-# ─────────────────────────────────────────────
-def receiver():
-    print(f"\n[RECEIVER] Opening {RECEIVER_PORT} ...")
-    with serial.Serial(RECEIVER_PORT, BAUD_RATE, timeout=5) as port:
-        print(f"[RECEIVER] Listening on {port.name}")
-        buf = b''
-        received, errors = 0, 0
+def receive_data(ser: serial.Serial) -> tuple[np.ndarray, bool]:
 
-        while True:
-            chunk = port.read(512)
-            if not chunk:
-                print("[RECEIVER] Timeout — no data received.")
-                break
-            buf += chunk
+    received_pwm_data = []
+    acknowledgement = False
 
-            # Parse all complete packets in the buffer
-            while len(buf) >= 10:
-                idx = buf.find(MAGIC)
-                if idx == -1:
-                    buf = b''
-                    break
-                buf = buf[idx:]          # discard bytes before magic
+    # Wait for START byte
+    while True:
+        b = ser.read(1)
+        if not b:
+            return np.array(received_pwm_data), False   # timeout
+        if b[0] == START_BYTE:
+            break
 
-                if len(buf) < 10:
-                    break
-                _, length = struct.unpack('>HH', buf[2:6])
-                pkt_len = 10 + length
-                if len(buf) < pkt_len:
-                    break                # wait for more bytes
+    # Read length (2 bytes)
+    len_bytes = ser.read(1) + ser.read(1)
+    if len(len_bytes) < 2:
+        return np.array(received_pwm_data), False
+    length = (len_bytes[0] << 8) | len_bytes[1]
 
-                raw_pkt = buf[:pkt_len]
-                buf     = buf[pkt_len:]
+    # Read payload
+    for _ in range(length):
+        b = ser.read(1)
+        if not b:
+            return np.array(received_pwm_data), False
+        received_pwm_data.append(b[0])
 
-                try:
-                    seq, payload = parse_packet(raw_pkt)
-                    if payload == b'END':
-                        print(f"\n[RECEIVER] END received.")
-                        print(f"[STATS] Received OK={received}  Errors={errors}")
-                        return
-                    data = decompress_data(payload)
-                    print(f"[RECEIVER] [{seq}] SUCCESS")
-                    received += 1
-                except (ValueError, zlib.error) as e:
-                    errors += 1
-                    print(f"  [RX ERROR] {e}  (total errors={errors})")
+    # Read checksum
+    chk_byte = ser.read(1)
+    if not chk_byte:
+        return np.array(received_pwm_data), False
+    received_checksum = chk_byte[0]
 
-# ─────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────
-if __name__ == '__main__':
-    # Sample telemetry data to transmit
-    messages = [
-        {"sensor": "temp",     "value": 23.5, "unit": "C",   "ts": 1700000001},
-        {"sensor": "humidity", "value": 65.2, "unit": "%",   "ts": 1700000002},
-        {"sensor": "pressure", "value": 1013, "unit": "hPa", "ts": 1700000003},
-        {"sensor": "gps",      "lat": 51.5,   "lon": -0.1,   "ts": 1700000004},
-        {"sensor": "battery",  "value": 87,   "unit": "%",   "ts": 1700000005},
-        {"sensor": "temp",      "value": 24.1, "unit": "C",   "ts": 1700000006},
-        {"sensor": "humidity",  "value": 63.8, "unit": "%",   "ts": 1700000007},
-        {"sensor": "pressure",  "value": 1015, "unit": "hPa", "ts": 1700000008},
-        {"sensor": "gps",       "lat": 51.501, "lon": -0.101, "ts": 1700000009},
-        {"sensor": "battery",   "value": 86,   "unit": "%",   "ts": 1700000010},
-        {"sensor": "temp",      "value": 22.9, "unit": "C",   "ts": 1700000011},
-        {"sensor": "humidity",  "value": 67.1, "unit": "%",   "ts": 1700000012},
-        {"sensor": "pressure",  "value": 1012, "unit": "hPa", "ts": 1700000013},
-        {"sensor": "gps",       "lat": 51.502, "lon": -0.102, "ts": 1700000014},
-        {"sensor": "battery",   "value": 85,   "unit": "%",   "ts": 1700000015},
-        {"sensor": "temp",      "value": 25.3, "unit": "C",   "ts": 1700000016},
-        {"sensor": "humidity",  "value": 60.5, "unit": "%",   "ts": 1700000017},
-        {"sensor": "pressure",  "value": 1010, "unit": "hPa", "ts": 1700000018},
-        {"sensor": "gps",       "lat": 51.503, "lon": -0.103, "ts": 1700000019},
-        {"sensor": "battery",   "value": 84,   "unit": "%",   "ts": 1700000020},
-        {"sensor": "temp",      "value": 21.7, "unit": "C",   "ts": 1700000021},
-        {"sensor": "humidity",  "value": 70.3, "unit": "%",   "ts": 1700000022},
-        {"sensor": "pressure",  "value": 1008, "unit": "hPa", "ts": 1700000023},
-        {"sensor": "gps",       "lat": 51.504, "lon": -0.104, "ts": 1700000024},
-        {"sensor": "battery",   "value": 83,   "unit": "%",   "ts": 1700000025},
-        {"sensor": "temp",      "value": 26.0, "unit": "C",   "ts": 1700000026},
-        {"sensor": "humidity",  "value": 58.9, "unit": "%",   "ts": 1700000027},
-        {"sensor": "pressure",  "value": 1016, "unit": "hPa", "ts": 1700000028},
-        {"sensor": "gps",       "lat": 51.505, "lon": -0.105, "ts": 1700000029},
-        {"sensor": "battery",   "value": 82,   "unit": "%",   "ts": 1700000030},
-        {"sensor": "temp",      "value": 23.2, "unit": "C",   "ts": 1700000031},
-        {"sensor": "humidity",  "value": 64.4, "unit": "%",   "ts": 1700000032},
-        {"sensor": "pressure",  "value": 1011, "unit": "hPa", "ts": 1700000033},
-        {"sensor": "gps",       "lat": 51.506, "lon": -0.106, "ts": 1700000034},
-        {"sensor": "battery",   "value": 81,   "unit": "%",   "ts": 1700000035},
-        {"sensor": "temp",      "value": 27.4, "unit": "C",   "ts": 1700000036},
-        {"sensor": "humidity",  "value": 55.0, "unit": "%",   "ts": 1700000037},
-        {"sensor": "pressure",  "value": 1009, "unit": "hPa", "ts": 1700000038},
-        {"sensor": "gps",       "lat": 51.507, "lon": -0.107, "ts": 1700000039},
-        {"sensor": "battery",   "value": 80,   "unit": "%",   "ts": 1700000040},
-        {"sensor": "temp",      "value": 20.5, "unit": "C",   "ts": 1700000041},
-        {"sensor": "humidity",  "value": 72.6, "unit": "%",   "ts": 1700000042},
-        {"sensor": "pressure",  "value": 1014, "unit": "hPa", "ts": 1700000043},
-        {"sensor": "gps",       "lat": 51.508, "lon": -0.108, "ts": 1700000044},
-        {"sensor": "battery",   "value": 79,   "unit": "%",   "ts": 1700000045},
-        {"sensor": "temp",      "value": 24.8, "unit": "C",   "ts": 1700000046},
-        {"sensor": "humidity",  "value": 61.7, "unit": "%",   "ts": 1700000047},
-        {"sensor": "pressure",  "value": 1017, "unit": "hPa", "ts": 1700000048},
-        {"sensor": "gps",       "lat": 51.509, "lon": -0.109, "ts": 1700000049},
-        {"sensor": "battery",   "value": 78,   "unit": "%",   "ts": 1700000050},
-    ]
+    # Read END byte
+    end_byte = ser.read(1)
+    if not end_byte or end_byte[0] != END_BYTE:
+        return np.array(received_pwm_data), False
 
-    print("=" * 55)
-    print(" LoRa Communication Simulation via com0com")
-    print(f" Sender   -> {SENDER_PORT}")
-    print(f" Receiver <- {RECEIVER_PORT}")
-    print(f" EmuNoise=0.01 active on port (hardware noise)")
-    print(f" Software corruption: {'ON' if CORRUPTION_ENABLED else 'OFF'}")
-    print("=" * 55)
+    # Verify checksum
+    expected_checksum = int(np.sum(received_pwm_data) % 256)
+    if received_checksum == expected_checksum and len(received_pwm_data) == length:
+        acknowledgement = True
 
-    # Start receiver in a background thread
-    rx_thread = threading.Thread(target=receiver, daemon=True)
-    rx_thread.start()
+    return np.array(received_pwm_data), acknowledgement
 
-    time.sleep(0.5)    # give receiver time to open the port
-    sender(messages)
+def receive_thread_task(received_data: list, no_of_success: int):
+    no_of_tries = 0
+    try:
+        with serial.Serial(port_receiver, 9600, timeout=0.2) as ser:
+            while len(received_data) < 100 and no_of_tries < 150:
+                pass
 
-    rx_thread.join(timeout=10)
+                received_arr, acknowledgement = receive_data(ser)
+                
+                if np.any(received_arr) or acknowledgement:
+                    received_data.append(received_arr)
+                    if acknowledgement:
+                        print(f"[RECEIVER] [{len(received_data)}] SUCCESS")
+                        no_of_success[0] += 1
+                    else: 
+                        print(f"[RECEIVER] [{len(received_data)}] FAILED")
+                no_of_tries += 1
+                time.sleep(0.01) 
+            else: 
+                print(f"[RECEIVER] Time Out")
+    except Exception as e:
+        print(f"Receiver Thread Error: {e}")
 
+def send_thread_task(all_data):
+    try: 
+        with serial.Serial(port_sender, 9600) as ser:
+            for i, data in enumerate(all_data):
+                send_data(ser, data)
+                print(f"[SENDER]   [{i+1}] Packet Sent")
+                time.sleep(0.15) 
+    except Exception as e:
+        print(f"Sender Thread Error: {e}")
+
+def generate_pwm():
+
+    pwm = np.random.randint(0, 255, size=(100,))
+    return pwm
+
+def main():
+
+    pwm_data = [generate_pwm() for i in range(100)]
+    received_data = []
+    no_of_success = [0]
+
+    receiver_thread = threading.Thread(target=receive_thread_task, args=(received_data, no_of_success))
+    receiver_thread.daemon = True
+    receiver_thread.start()
+
+    time.sleep(1)
+
+    sender_thread = threading.Thread(target=send_thread_task, args=(pwm_data,))
+    sender_thread.daemon = True
+    sender_thread.start()
+
+    time.sleep(1)
+
+    sender_thread.join(timeout=30)
+    receiver_thread.join(timeout=30)
+
+    print(f"Total Successful: {no_of_success[0]}/100")
+
+if __name__ == "__main__":
+    main()

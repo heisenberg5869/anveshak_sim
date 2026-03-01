@@ -6,39 +6,26 @@ import pandas as pd
 import math
 import csv
 
-# -----------------------------------------------------
 # Runtime modes & visualization toggles
-# -----------------------------------------------------
 MODE = "MANUAL"        # MANUAL | AUTO
 SHOW_LIDAR = True
 SHOW_ODOM = True
 
-
-# -----------------------------------------------------
-# Control commands (shared state)
-# -----------------------------------------------------
+# Control commands
 v = 0.0   # linear velocity [m/s]
 w = 0.0   # angular velocity [rad/s]
 
 class Controller:
-    def __init__(self, path_file, lookahead_dist=0.3, max_v=6.0, Ld_min=0.3, Ld_max=1.0, k=0.5, Kp=1.6, Ki=0.1, Kd=0.4, dt=0.01):
-        # Load (x, y) coordinates from CSV
+    def __init__(self, path_file, lookahead_dist=0.3, max_v=6.0, Ld_min=0.3, Ld_max=0.6, k=0.5):
         self.path = pd.read_csv(path_file).values  
         self.Ld = lookahead_dist
         self.v_max = max_v
         self.Ld_min = Ld_min
         self.Ld_max = Ld_max
         self.k = k
-        self.Kp = Kp
-        self.Ki = Ki
-        self.Kd = Kd
-        self.integral = 0.0
-        self.previous_error = 0.0
-        self.derivative = 0.0
-        self.dt = dt
         self.v = 0.0
         self.w = 0.0
-
+    
     def lookahead(self, v):
         self.Ld = (self.k * v) + self.Ld_min
         self.Ld = max(min(self.Ld, self.Ld_max), self.Ld_min)
@@ -48,67 +35,52 @@ class Controller:
         # 1. Find the point on the path closest to the robot
         distances = np.sqrt((self.path[:,0] - robot_x)**2 + (self.path[:,1] - robot_y)**2)
         closest_idx = np.argmin(distances)
-    
+
         # 2. Search forward from the closest index for the lookahead point
         for i in range(closest_idx, len(self.path) - 1):
             p1 = self.path[i]
             p2 = self.path[i+1]
             
-            d = p2 - p1 # Direction vector of segment
-            f = p1 - np.array([robot_x, robot_y]) # Vector from robot to p1
+            d = p2 - p1                                              # Direction vector of segment
+            f = p1 - np.array([robot_x, robot_y])                     # Vector from robot to p1
             
-            a = np.dot(d, d)
-            b = 2 * np.dot(f, d)
-            c = np.dot(f, f) - self.Ld**2
+            a = np.dot(d, d)                                          # Segment length squared
+            b = 2 * np.dot(f, d)                                      # Projection of f onto d
+            c = np.dot(f, f) - self.Ld**2                             # Perpendicular distance squared
         
             discriminant = b**2 - 4*a*c
-            if discriminant >= 0 and a > 10e-8:
+            if discriminant >= 0 and a > 1e-8:
                 discriminant = np.sqrt(discriminant)
-                t2 = (-b + discriminant) / (2*a) # Intersection factor
+                t2 = (-b + discriminant) / (2*a)                       # Intersection factor
             else:
                 t2 = -1.0
-                if 0 <= t2 <= 1:
-                    return p1 + t2 * d
+            if 0 <= t2 <= 1:
+                return p1 + t2 * d
                 
-        return self.path[closest_idx + 1] # Return next closest point
+        return self.path[closest_idx + 1]                            # Return next closest point
 
     def get_control(self, robot_pose):
         x, y, theta = robot_pose
         target_pt = self.find_lookahead_point(x, y, self.v)
-    
-        # Transform target to robot's local frame
+
         dx = target_pt[0] - x
         dy = target_pt[1] - y
-    
-        # Local target coordinates (Rotation matrix)
+
         local_x = dx * np.cos(theta) + dy * np.sin(theta)
         local_y = -dx * np.sin(theta) + dy * np.cos(theta)
-    
-        # Calculate Curvature (kappa = 2y / Ld^2)
-        # We use local_y because it represents the lateral error
+
         kappa = (2 * local_y) / (self.Ld**2)
 
-        #Calculate Error
-        error = local_y
-
-        #Calculate Derivative
-        self.derivative = (error - self.previous_error) / self.dt
-
-        #Calculate Integral
-        self.integral += error * self.dt
-        self.previous_error = error
-
-        w_pid = self.Kp * error + self.Ki * self.integral + self.Kd * self.derivative
         self.v = self.v_max
-        self.w = w_pid + self.v * kappa  # angular velocity
-    
+        self.w = self.v * kappa
+
         return self.v, self.w
 
 def on_key(event):
     """Keyboard control & visualization toggles."""
     global v, w, MODE, SHOW_LIDAR, SHOW_ODOM
 
-    # --- visualization toggles ---
+    # visualization toggles 
     if event.key == 'o':
         SHOW_ODOM = not SHOW_ODOM
         print(f"Odometry visualization: {'ON' if SHOW_ODOM else 'OFF'}")
@@ -119,7 +91,7 @@ def on_key(event):
         print(f"LiDAR visualization: {'ON' if SHOW_LIDAR else 'OFF'}")
         return
 
-    # --- mode switching ---
+    # mode switching 
     if event.key == 'm':
         MODE = "MANUAL"
         v = 0.0
@@ -132,7 +104,7 @@ def on_key(event):
         print("Switched to AUTO mode")
         return
 
-    # --- manual control ---
+    # manual control 
     if MODE != "MANUAL":
         return
 
@@ -166,9 +138,7 @@ if __name__ == "__main__":
 
     dt = 0.01 
 
-    # -------------------------------------------------
     # Main simulation loop
-    # -------------------------------------------------
     while plt.fignum_exists(fig.number):
 
         # ground truth pose
@@ -181,12 +151,10 @@ if __name__ == "__main__":
 
 
 
-    # ---------------------------------------------
     # write your autonomous code here!!!!!!!!!!!!!
-    # ---------------------------------------------
         if MODE == "AUTO":
             if 'controller' not in globals():
-                controller = Controller(path_file=r"C:\Users\vtsar\projects\anveshak\anveshak_sim\path.csv",lookahead_dist=0.4,max_v=6.0,Ld_min=0.3,Ld_max=1.0,k=0.5,Kp=1.6,Ki=0.1,Kd=0.4,dt=dt)
+                controller = Controller(path_file=r"C:\Users\vtsar\projects\anveshak\anveshak_sim\path.csv",lookahead_dist=0.4,max_v=6.0,Ld_min=0.3,Ld_max=1.0,k=0.5)
 
             if 'avoid_mode' not in globals():
                 avoid_mode = False
@@ -194,75 +162,61 @@ if __name__ == "__main__":
             
             CENTER_RAY_IDX    = 18          # straight ahead (adjust if your lidar indexing is different)
             RAY_OFFSET        = 1           # so we check CENTER-1, CENTER, CENTER+1
-            A_MAX             = 8.0         # m/s² — maximum deceleration we assume the robot can do
-            MIN_D_STOP        = 0.20        # meters — never allow closer than this, even at v≈0
+            A_MAX             = 8.0         # m/s² — maximum deceleration we assume the rover can do
+            MIN_D_STOP        = 0.50        # meters — never allow closer than this, even at v≈0
             MAX_D_STOP        = 4.0         # meters — upper limit so we don't over-react at high speed
-            AVOID_V           = 0.5        # slow crawl while dodging
+            AVOID_V           = 0.5         # slow crawl while dodging
             AVOID_W           = 2.2         # sharp but controllable turn
-            OBSTACLE_DIST = 0.65            # distance to obstacle to trigger avoidance
+            OBSTACLE_DIST     = 0.65        # distance to obstacle to trigger avoidance
 
 
-            # Get current commanded speed (the one we're about to send)
-            # We use abs(v) because direction doesn't matter for stopping distance
-            current_speed = abs(v)   # ← v is still the previous loop's value or 0 at start
+            # Get current commanded speed 
+            current_speed = abs(v)  
 
             # Compute required stopping distance
-            d_stop = (current_speed ** 2) / (2 * A_MAX)
-
-            # Apply floor and ceiling
-            d_stop = max(MIN_D_STOP, min(MAX_D_STOP, d_stop))
+            d_stop = (current_speed ** 2) / (2 * A_MAX) + MIN_D_STOP
+            d_stop = min(MAX_D_STOP, d_stop)
 
             # Get the three forward rays
             lidar_array = np.array(lidar_ranges)
             forward_rays = lidar_array[CENTER_RAY_IDX - RAY_OFFSET : CENTER_RAY_IDX + RAY_OFFSET + 1]
 
-            # Valid ranges only (ignore max_range readings or NaN/infs if any)
+            # Valid ranges only
             valid_forward = forward_rays[(forward_rays > 0.01) & (forward_rays < lidar.max_range * 0.99)]
 
-            # ─── Detection ──────────────────────────────────
+            # Detection 
             obstacle_detected = False
 
             if len(valid_forward) >= 1:   # at least one valid measurement
                 if np.any(valid_forward < d_stop):
                     obstacle_detected = True
             
-            # ─── State machine ──────────────────────────────────────────────────────
             if obstacle_detected:
                 avoid_mode = True
-            elif not obstacle_detected:
+            elif avoid_mode and len(valid_forward) > 0 and np.min(valid_forward) > OBSTACLE_DIST * 1.5:
                 avoid_mode = False
 
-            # ─── Control logic ──────────────────────────────────────────────────────
             if not avoid_mode:
-                # === NORMAL PATH FOLLOWING ===
                 v, w = controller.get_control((ideal_x, ideal_y, ideal_theta))
             else:
-                # === REACTIVE AVOIDANCE ===
-                # Clever trick: roll the array so that ray 0 = robot's current front
                 shifted = np.roll(lidar_array, -CENTER_RAY_IDX)
 
-                # Left half (positive rotation = CCW = left turn) and right half
-                half = len(shifted) // 2
-                left_sector  = shifted[2:half]          # left side
-                right_sector = shifted[half+2:]         # right side
+                left_clear = np.min(shifted[8:25])    
+                right_clear = np.min(shifted[-25:-8])  
+                front_clear = np.min(shifted[0:8])     
 
-                # "Clearance" = how far the closest obstacle is on that side
-                left_clearance  = np.min(left_sector)  if len(left_sector)  > 0 else 0.0
-                right_clearance = np.min(right_sector) if len(right_sector) > 0 else 0.0
-
-                # Choose the obviously better side
-                if left_clearance > right_clearance + 0.15:      # small buffer
-                    turn_dir = 1.0                               # turn left
+                if front_clear > OBSTACLE_DIST * 1.2:
+                    v = controller.v_max * 0.8 
+                    w = 0.0  
+                elif abs(left_clear - right_clear) > 0.2:
+                    turn_dir = np.sign(left_clear - right_clear)
+                    v = AVOID_V
+                    w = turn_dir * AVOID_W
                 else:
-                    turn_dir = -1.0                              # turn right
-
-                v = AVOID_V
-                w = turn_dir * AVOID_W
-
-            
-        # ---------------------------------------------
+                    v = AVOID_V * 0.5
+                    w = 0.0
+                
         # don't edit below this line (visualization & robot stepping)
-        # ---------------------------------------------
         robot.step(
             lidar_points,
             lidar_rays,

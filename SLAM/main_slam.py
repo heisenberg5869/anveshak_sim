@@ -11,7 +11,7 @@ import csv
 MODE = "MANUAL"        # MANUAL | AUTO
 SHOW_LIDAR = True
 SHOW_ODOM = True
-SHOW_MAP  = True       # Toggle occupancy map overlay with 'm' 
+SHOW_MAP  = True       # Toggle occupancy map overlay with 'g'
 
 # Control commands
 v = 0.0   # linear velocity [m/s]
@@ -21,19 +21,19 @@ w = 0.0   # angular velocity [rad/s]
 # Occupancy Grid Parameters
 # ---------------------------------------------------------------------------
 GRID_RESOLUTION = 0.05          # metres per cell
-GRID_WIDTH_M    = 12.0          # total map width  [m]
-GRID_HEIGHT_M   = 12.0          # total map height [m]
-GRID_ORIGIN_X   = -GRID_WIDTH_M  / 2.0   # world-x of cell (0,0)
-GRID_ORIGIN_Y   = -GRID_HEIGHT_M / 2.0   # world-y of cell (0,0)
+GRID_WIDTH_M    = 20.0          # match sim arena width  [m]
+GRID_HEIGHT_M   = 20.0          # match sim arena height [m]
+GRID_ORIGIN_X   = 0.0           # world-x of cell (0,0) — same as sim
+GRID_ORIGIN_Y   = 0.0           # world-y of cell (0,0) — same as sim
 
 GRID_COLS = int(GRID_WIDTH_M  / GRID_RESOLUTION)
 GRID_ROWS = int(GRID_HEIGHT_M / GRID_RESOLUTION)
 
-# Log-odds update values  
-L_OCC   =  0.85    # log-odds added when a cell is hit
-L_FREE  = -0.40    # log-odds added when a cell is on the free ray
-L_MIN   = -5.0     # clamp floor
-L_MAX   =  5.0     # clamp ceiling
+# Log-odds update values
+L_OCC   =  0.90    # log-odds added when a cell is hit
+L_FREE  = -0.55    # log-odds added when a cell is on the free ray (stronger clear)
+L_MIN   = -4.0     # clamp floor  (fewer updates needed to go fully white)
+L_MAX   =  4.0     # clamp ceiling (fewer updates needed to go fully black)
 
 # Observation confidence as a function of range
 MAX_RANGE_CONF = 4.0   # metres – range at which confidence reaches 0
@@ -92,20 +92,6 @@ def update_occupancy_grid(log_odds, detect_angle,
                           rover_angular_z, max_range):
     """
     Bayesian occupancy grid update using log-odds representation.
-
-    Parameters
-    ----------
-    log_odds      : 2-D np.ndarray (GRID_ROWS × GRID_COLS) of log-odds values
-    detect_angle  : 2-D np.ndarray storing the last detection angle per cell
-    lidar_ranges  : 1-D array of range measurements from the LiDAR
-    lidar_points  : list/array of (x, y) hit points in *world* coordinates
-    rover_x/y/theta : current ground-truth pose
-    rover_angular_z : angular velocity for motion gating
-    max_range       : sensor maximum range
-
-    Returns
-    -------
-    log_odds, detect_angle  (updated in-place, also returned for clarity)
     """
 
     # 1. Motion gating – skip noisy updates while spinning fast
@@ -119,10 +105,13 @@ def update_occupancy_grid(log_odds, detect_angle,
     rover_col, rover_row = rover_cell
 
     # 3. Process each LiDAR beam
+    hit_cells_valid = []   # track valid hit cells to fill inter-ray gaps later
+
     for i, (rng, hit_world) in enumerate(zip(lidar_ranges, lidar_points)):
 
         # Skip invalid / max-range readings
         if rng < 0.01 or rng >= max_range * 0.99:
+            hit_cells_valid.append(None)
             continue
 
         hit_x, hit_y = float(hit_world[0]), float(hit_world[1])
@@ -132,8 +121,10 @@ def update_occupancy_grid(log_odds, detect_angle,
 
         hit_cell = world_to_grid(hit_x, hit_y)
         if hit_cell is None:
+            hit_cells_valid.append(None)
             continue
         hit_col, hit_row = hit_cell
+        hit_cells_valid.append((hit_col, hit_row))
 
         # 4. Ray-cast: mark free cells along the beam
         ray_cells = bresenham(rover_col, rover_row, hit_col, hit_row)
@@ -142,22 +133,23 @@ def update_occupancy_grid(log_odds, detect_angle,
             if not (0 <= c < GRID_COLS and 0 <= r < GRID_ROWS):
                 continue
 
-            free_update = confidence * L_FREE   # negative update
+            # Full L_FREE on every free cell — free space clears decisively
+            free_update = L_FREE
 
-            # Wall preservation: if cell looks occupied AND this ray comes
-            # from a very different angle, damp the freeing update heavily.
-            if log_odds[r, c] > 1.5:   # cell is probably a wall
+            # Wall preservation: damp clearing only when ray hits from a
+            # DIFFERENT angle (not same direction), to protect confirmed walls
+            if log_odds[r, c] > 1.5:
                 current_angle = math.atan2(r - rover_row, c - rover_col)
                 prev_angle    = detect_angle[r, c]
                 angle_diff    = abs(math.degrees(
                     math.atan2(math.sin(current_angle - prev_angle),
                                math.cos(current_angle - prev_angle))))
-                if angle_diff < WALL_ANGLE_THRESHOLD_DEG:
-                    free_update *= 0.1   # nearly same direction → damp strongly
+                if angle_diff > WALL_ANGLE_THRESHOLD_DEG:
+                    free_update *= 0.1   # very different angle → protect wall
 
             log_odds[r, c] = np.clip(log_odds[r, c] + free_update, L_MIN, L_MAX)
 
-        # 5. Mark hit cell as occupied
+        # 5. Mark hit cell as occupied — confidence scales certainty by range
         occ_update = confidence * L_OCC
         log_odds[hit_row, hit_col] = np.clip(
             log_odds[hit_row, hit_col] + occ_update, L_MIN, L_MAX)
@@ -165,6 +157,25 @@ def update_occupancy_grid(log_odds, detect_angle,
         # Record the angle from which this cell was last detected
         detect_angle[hit_row, hit_col] = math.atan2(
             hit_row - rover_row, hit_col - rover_col)
+
+    # 6. Fill angular gaps between consecutive valid hit cells.
+    #    For each adjacent pair of hits, walk the arc (bresenham between hits)
+    #    and cast a free-space ray from the rover to every point on that arc.
+    #    This turns the grey wedges between beams white.
+    for k in range(len(hit_cells_valid) - 1):
+        h1 = hit_cells_valid[k]
+        h2 = hit_cells_valid[k + 1]
+        if h1 is None or h2 is None:
+            continue
+        arc_cells = bresenham(h1[0], h1[1], h2[0], h2[1])
+        for (ca, ra) in arc_cells:
+            if not (0 <= ca < GRID_COLS and 0 <= ra < GRID_ROWS):
+                continue
+            fill_ray = bresenham(rover_col, rover_row, ca, ra)
+            for (c, r) in fill_ray[:-1]:
+                if 0 <= c < GRID_COLS and 0 <= r < GRID_ROWS:
+                    log_odds[r, c] = np.clip(
+                        log_odds[r, c] + L_FREE, L_MIN, L_MAX)
 
     return log_odds, detect_angle
 
@@ -175,7 +186,7 @@ def log_odds_to_prob(log_odds):
 
 
 # ---------------------------------------------------------------------------
-# Controller (unchanged from original)
+# Controller
 # ---------------------------------------------------------------------------
 
 class Controller:
@@ -272,16 +283,18 @@ def on_key(event):
 if __name__ == "__main__":
 
     lidar = LidarScan(max_range=4.0)
-    robot = Robot()
+
+    plt.close('all')
+    fig, (ax_sim, ax_map) = plt.subplots(1, 2, num=2, figsize=(14, 7))
+    fig.subplots_adjust(wspace=0.35)
+    fig.canvas.manager.set_window_title("Autonomy Debug View")
+    fig.canvas.mpl_connect("key_press_event", on_key)
+
+    robot = Robot(ax=ax_sim)              # ← pass ax_sim so Visualizer draws here only
 
     # Initialise occupancy grid (log-odds, all zeros = 0.5 probability)
     log_odds     = np.zeros((GRID_ROWS, GRID_COLS), dtype=np.float32)
     detect_angle = np.zeros((GRID_ROWS, GRID_COLS), dtype=np.float32)
-
-    plt.close('all')
-    fig, (ax_sim, ax_map) = plt.subplots(1, 2, num=2, figsize=(14, 7))
-    fig.canvas.manager.set_window_title("Autonomy Debug View")
-    fig.canvas.mpl_connect("key_press_event", on_key)
 
     # Set up the map axes once
     ax_map.set_title("Occupancy Grid Map")
@@ -296,7 +309,7 @@ if __name__ == "__main__":
     ax_map.legend(loc='upper right', fontsize=7)
 
     # Map refresh counter – update visualisation every N steps (cheap)
-    MAP_REFRESH_EVERY = 10
+    MAP_REFRESH_EVERY = 1
     step_count = 0
 
     # Estimate angular velocity from pose changes
@@ -323,7 +336,6 @@ if __name__ == "__main__":
         # Estimate angular velocity from successive theta readings
         if prev_theta is not None:
             d_theta   = real_theta - prev_theta
-            # Wrap to [-pi, pi]
             d_theta   = math.atan2(math.sin(d_theta), math.cos(d_theta))
             angular_z = d_theta / dt
         prev_theta = real_theta
@@ -333,7 +345,7 @@ if __name__ == "__main__":
         # -------------------------------------------------------------------
         log_odds, detect_angle = update_occupancy_grid(
             log_odds, detect_angle,
-            lidar_ranges, lidar_points,
+            lidar_ranges, lidar_hits,
             real_x, real_y, real_theta,
             angular_z,
             lidar.max_range)
@@ -400,16 +412,16 @@ if __name__ == "__main__":
         step_count += 1
         if SHOW_MAP and step_count % MAP_REFRESH_EVERY == 0:
             prob_map = log_odds_to_prob(log_odds)
-            # Flip so that high occupancy = dark (0) and free = light (1)
             map_img.set_data(1.0 - prob_map)
             rover_dot_map.set_data([real_x], [real_y])
             ax_map.set_title(
                 f"Occupancy Grid  (step {step_count})  "
                 f"Press 'g' to toggle")
-            fig.canvas.draw_idle()
+            fig.canvas.draw()
+            fig.canvas.flush_events()
 
         # -------------------------------------------------------------------
-        # Robot step & render (don't edit below)
+        # Robot step & render
         # -------------------------------------------------------------------
         robot.step(
             lidar_points, lidar_rays, lidar_hits,

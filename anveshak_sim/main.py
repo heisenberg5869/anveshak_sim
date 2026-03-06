@@ -161,8 +161,8 @@ if __name__ == "__main__":
 
             
             CENTER_RAY_IDX    = 18          # straight ahead (adjust if your lidar indexing is different)
-            RAY_OFFSET        = 1           # so we check CENTER-1, CENTER, CENTER+1
-            A_MAX             = 8.0         # m/s² — maximum deceleration we assume the rover can do
+            RAY_OFFSET        = 1           # so we check CENTER-1, CENTER, CENTER+1 
+            A_MAX             = 8.0        # m/s² — maximum deceleration we assume the rover can do
             MIN_D_STOP        = 0.50        # meters — never allow closer than this, even at v≈0
             MAX_D_STOP        = 4.0         # meters — upper limit so we don't over-react at high speed
             AVOID_V           = 0.5         # slow crawl while dodging
